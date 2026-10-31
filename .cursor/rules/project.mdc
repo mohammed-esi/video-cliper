@@ -1,0 +1,50 @@
+---
+description: "Core scope, workflow, and boundaries for the Video Clipper assessment project. Applies to every task."
+alwaysApply: true
+---
+
+# Video Clipper: project rules
+
+## Purpose
+A local tool for a hiring assessment (LXD / Blue Foxes, Part 1). It turns a 16:9 video (upload or YouTube URL) into vertical 9:16 clips:
+auto-segmentation, per-clip start/end and length adjustment, subject-tracking crop, preview, export one clip or all as a ZIP.
+Reviewers must be able to run it locally, and it must be usable by a non-developer.
+
+## Layout and boundaries
+- `frontend/`: Next.js 16 App Router UI only. No media processing, no proxying video bytes through Next.js.
+- `backend/` (FastAPI): all file handling, FFmpeg, OpenCV, yt-dlp. Route handlers stay thin; logic lives in services.
+- The frontend talks to the backend only over its HTTP API. Shared shapes are defined once in backend Pydantic schemas and mirrored in `frontend/src/lib`.
+- Before creating or editing files in an area, read its rule even if no matching file is open yet:
+  `.cursor/rules/frontend.mdc`, `backend.mdc`, `video-processing.mdc`, `security.mdc`.
+
+## Workflow (strict)
+- Do only the task explicitly requested. Do not start later phases, add features, or "improve" unrelated code.
+- If the task is ambiguous or needs a decision with lasting impact (new dependency, API shape, storage layout), stop and ask.
+- Explain significant architectural decisions in 1–3 sentences when you make them.
+- After changes, run the relevant checks (see Verification) and report the real output. Never hide, skip, or silence a failure.
+- End by summarizing what changed, what was verified, and what is left. Then stop.
+
+## Git safety
+Never commit, push, create or switch branches, rebase, reset, stash, or change git config unless the user explicitly asks in that message.
+
+When the user asks for a commit: use an imperative subject line (what the change does for the project); add a short body if both frontend and backend are included. Never stage secrets, local env files (e.g. `.env.local`), virtualenvs, `node_modules`, build artifacts, caches, or video fixtures. Run the Verification checks below for every area you changed before committing.
+
+## Dependencies
+- Only free, open-source dependencies. No paid APIs, cloud services, API keys, or accounts may be required to run the app.
+- Pre-approved (agreed stack): Next.js, React, TypeScript, Tailwind CSS; FastAPI, Pydantic, Uvicorn, `python-multipart`; FFmpeg/ffprobe; OpenCV (`opencv-python`, YuNet model); yt-dlp; `pytest` for tests. These may be added when the current task needs them.
+- Anything else (additional, unrelated, or substantial libraries) needs approval first: name it, its license, and why the stdlib or the agreed stack is not enough.
+- No databases, Redis, Celery, message queues, or microservices unless the user approves a real need.
+
+## Priorities when trade-offs conflict
+1. Correctness 2. Assessment requirements 3. Security 4. Maintainability 5. Development speed 6. Performance (only where measured).
+
+## Code quality
+- Prefer the simplest design that meets the requirement; no speculative abstractions, base classes, or config for unasked features.
+- Small, single-purpose functions and modules; descriptive names; no dead code or commented-out code.
+- Handle errors explicitly; never swallow exceptions. Users see plain-language messages; details go to logs.
+- Comments explain *why*, not *what*. Update `README.md` when setup steps, commands, or env vars change.
+
+## Verification
+- Frontend (from `frontend/`): `yarn lint`, `yarn tsc --noEmit` (no `typecheck` script exists; do not add one or edit `package.json`/`README.md` unless asked), and `yarn build` for changes that affect routing, config, or build output.
+- Backend (from `backend/`, once it exists): `pytest` for the affected modules.
+- If a check cannot be run (missing tool, no backend yet), say so explicitly.

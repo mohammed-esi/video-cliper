@@ -1,0 +1,52 @@
+---
+description: "Next.js 16 / React 19 / Tailwind v4 conventions for the Video Clipper UI: components, API calls, media previews, UX states."
+globs:
+  - "frontend/**/*.ts"
+  - "frontend/**/*.tsx"
+  - "frontend/**/*.css"
+alwaysApply: false
+---
+
+# Frontend rules
+
+## Next.js 16 specifics
+- This Next.js version differs from older training data. Follow `frontend/AGENTS.md`: check `frontend/node_modules/next/dist/docs/` before using an App Router API you are not sure about. Heed deprecations.
+- `cacheComponents` is enabled. Keep route shells static; do not read runtime APIs (`cookies`, `headers`, `searchParams`) in layouts or pages unless required, and wrap them in `<Suspense>` if you do.
+- Package manager is Yarn Classic. Use `yarn`, never npm/pnpm. Path alias `@/*` → `frontend/src/*`.
+
+## Structure
+- `src/app/`: routes and layouts only, thin. Pages compose feature components.
+- `src/features/<feature>/`: feature UI and hooks (e.g. `import`, `clips`, `export`).
+- `src/components/`: generic, reusable UI primitives with no backend knowledge.
+- `src/lib/`: API client, shared types, pure helpers (time formatting, validation).
+
+## Server vs Client Components
+- Default to Server Components. Add `'use client'` only on the smallest component that needs state, effects, event handlers, or media elements.
+- The editor (upload, polling, timeline, video preview) is client-side and calls the FastAPI backend directly. Do not use Server Functions or route handlers to relay uploads or video files.
+
+## API communication
+- All backend calls go through one typed client in `src/lib/api` using `process.env.NEXT_PUBLIC_API_BASE_URL` (see `frontend/.env.example`; dev fallback in code when unset).
+- Type every response; validate assumptions at the boundary (check `res.ok`, parse error bodies into a user-facing message).
+- Uploads: use `XMLHttpRequest` (or an equivalent) so upload progress can be shown; `fetch` has no upload progress.
+- Long jobs: poll the job status endpoint every 1–2 s; stop on terminal states. Use `AbortController` and clear timers on unmount.
+
+## State
+- `useState`/`useReducer` and props. No Redux, Zustand, React Query, or other state libraries without approval.
+- Times are numbers in seconds (floats) everywhere in state and API; format to `mm:ss.s` only for display.
+- Client-side validation (start < end, within duration, min/max clip length) mirrors the backend for fast feedback; the backend remains authoritative.
+
+## Media previews
+- Preview edits by playing the working video served by the backend between `start` and `end` with `currentTime` and a `timeupdate` guard. Do not re-render a clip to preview a time change.
+- Show the 9:16 crop as an overlay on the 16:9 player; render real vertical files only on export.
+- Revoke any `URL.createObjectURL` value when done; pause and detach media on unmount.
+- Use `preload="metadata"` for lists of clips; never autoplay with sound.
+
+## UX for non-developers
+- Every async view has explicit loading, error (with a retry or next step), and empty states.
+- Show progress for upload, analysis, and export; disable actions that would conflict while a job runs.
+- Plain-language copy; never show stack traces, raw paths, or HTTP codes alone.
+
+## Accessibility and styling
+- Semantic HTML; every input has a label; range sliders keyboard-operable with visible values; visible focus states; buttons are `<button>`.
+- Tailwind v4 utilities and theme tokens in `globals.css` (`@theme`). No `tailwind.config.js` and no extra CSS frameworks. Respect the existing light/dark variables.
+- Responsive down to tablet width; desktop is the primary target.

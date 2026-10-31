@@ -1,0 +1,41 @@
+---
+description: "Security rules for handling untrusted uploads, YouTube URLs, subprocesses, file paths, and resource limits in the backend."
+globs:
+  - "backend/app/**/*.py"
+alwaysApply: false
+---
+
+# Security rules (untrusted input)
+
+Every uploaded file, URL, filename, clip time, and job ID is attacker-controlled.
+
+## Uploads
+- Stream to disk in chunks and abort once `max_upload_bytes` is exceeded; never `await file.read()` the whole body.
+- Allow-list extensions (`.mp4`, `.mov`, `.mkv`, `.webm`, `.m4v`) as a first filter only. The real check is `ffprobe`: require a video stream and a container `format_name` from an allow-list (mov/mp4 family, matroska/webm). Reject playlists and indirect formats (`hls`, `concat`, `image2`, etc.).
+- Enforce `max_duration_seconds` and a maximum resolution after probing, before any heavy processing.
+
+## Paths and filenames
+- Never build a filesystem path from client input. Files get server-chosen names inside `<data_dir>/jobs/<uuid>/`.
+- Job IDs are parsed as `uuid.UUID`; resolve the final path and assert `path.resolve().is_relative_to(data_dir.resolve())` before any read/write/delete.
+- The original filename is display metadata only: strip directories and control characters and cap the length; use it only in `Content-Disposition` via a sanitized value.
+
+## Subprocesses (FFmpeg, ffprobe)
+- `subprocess.run`/`Popen` with an argument list, `shell=False`, and a `timeout`. Never interpolate input into a shell string.
+- Pass local inputs as `file:<absolute path>` and add `-protocol_whitelist file,pipe` so a crafted file cannot make FFmpeg open network URLs or other protocols.
+- Numeric arguments (times, sizes, coordinates) are validated numbers formatted by our code, never raw strings from the request.
+- Use `-nostdin` (except when piping frames) and `-y` only on server-chosen output paths.
+
+## YouTube imports (SSRF)
+- Accept only `https` URLs whose host is exactly `youtube.com`, `www.youtube.com`, `m.youtube.com`, `music.youtube.com`, or `youtu.be`; extract and validate the 11-char video ID and rebuild a canonical URL from it. Reject everything else, including IPs, localhost, and other hosts.
+- Use the yt-dlp Python API (not a shell) with: `allowed_extractors=["youtube"]`, `noplaylist=True`, a `max_filesize`, an H.264/AAC-preferring format string, a server-chosen `outtmpl` inside the job dir, no cookies, and no `Exec` post-processors. Never pass user-supplied yt-dlp options.
+- Check duration from the extracted info before downloading; reject over-limit videos without downloading.
+
+## Resource exhaustion
+- One media job at a time (single-worker executor); reject or queue new jobs with a clear message, and cap queued jobs.
+- Limits live in `Settings`: upload size, duration, resolution, clips per job, subprocess timeouts. Check free disk space before downloads and renders.
+- Clean up job directories after a TTL and partial files on failure.
+
+## Errors, logs, CORS
+- Client errors are generic and actionable ("This file is not a supported video"). Never return stack traces, FFmpeg stderr, or absolute paths.
+- Do not log full request bodies or URLs with query strings; log job IDs and the canonical video ID instead.
+- CORS: allow only the configured frontend origin (default `http://localhost:3000`), not `*`. Bind the server to `127.0.0.1` by default.

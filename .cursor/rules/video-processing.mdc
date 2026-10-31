@@ -1,0 +1,52 @@
+---
+description: "FFmpeg/ffprobe, segmentation, accurate cutting, 9:16 crop with face tracking and smoothing, audio, and export rules for media code."
+globs:
+  - "backend/app/services/**/*.py"
+  - "backend/tests/**/*.py"
+alwaysApply: false
+---
+
+# Video-processing rules
+
+## Pipeline (keep this shape)
+1. Import: upload or yt-dlp download → probe → normalize only if needed.
+2. Analyze: segmentation + subject positions on a low-res sample.
+3. Edit: user changes clip times (metadata only; no rendering).
+4. Export: render requested clips at full quality; optional ZIP.
+
+## Probing and normalization
+- Use `ffprobe -v error -print_format json -show_format -show_streams` and parse JSON; never scrape text output.
+- Require a video stream. Read width, height, duration, rotation, and frame rate from the probe; handle a missing audio stream gracefully.
+- Decide from the probe whether to normalize. Keep the original as-is when it is already browser- and pipeline-friendly (MP4/MOV container, H.264 `yuv420p` video, AAC or no audio, no rotation metadata).
+- Normalize (once, to H.264 `yuv420p` + AAC MP4, `+faststart`) only when something is incompatible: other codecs/containers (YouTube often gives VP9/AV1/WebM), unusual pixel formats, rotation, or clearly variable frame rate (`avg_frame_rate` far from `r_frame_rate`).
+- Keep this decision in one pure function of the probe result so it is unit-testable. The video the app uses afterwards is called the *working video* (original or normalized).
+- When reading frames from a non-normalized source, use frame timestamps (`CAP_PROP_POS_MSEC`), not `frame_index / fps`.
+- Inputs are 16:9-ish landscape. Reject portrait or extreme aspect ratios with a clear message rather than producing a bad crop.
+
+## Segmentation
+- Initial implementation: reliable time-based segmentation. Split `[0, duration]` into clips of a configured target length; merge a too-short final remainder into the previous clip so every clip respects min/max length.
+- Clips are sorted, non-overlapping, and inside `[0, duration]`. Very short videos produce a single clip.
+- Implement segmentation as a pure function of (duration, settings, optional cut hints) so it is unit-testable without video, and so better cut points can be added later without changing callers.
+- Optional improvements, only when the user asks and time permits: snap boundaries to FFmpeg scene changes (`scdet` or `select='gt(scene,T)'`) and/or to `silencedetect` pauses. PySceneDetect or transcript-based clipping needs approval.
+
+## Cutting and timestamps
+- Times are float seconds internally. Clamp and validate `0 ≤ start < end ≤ duration` and length bounds before any FFmpeg call.
+- Exact cuts require re-encoding: `-ss <start>` before `-i` plus `-t <length>`, with re-encode. Never `-c copy` for clips; it snaps to keyframes.
+
+## Subject tracking and crop
+- Detector: OpenCV `cv2.FaceDetectorYN` (YuNet ONNX model stored in the repo under `backend/models/` with its license noted). No Haar cascades as the primary detector; no frame-by-frame OpenCV trackers.
+- Sample frames at ~4–5 fps on a downscaled copy (e.g. 640 px wide) and map coordinates back to source pixels with one explicit scale factor.
+- Choose one primary subject per segment (largest/most persistent face). When no face is found, hold the last known position; if none, use the frame center.
+- Crop geometry: `crop_w = even(round(src_h * 9 / 16))`, `crop_h = even(src_h)`, `x = clamp(center_x - crop_w/2, 0, src_w - crop_w)`. All crop sizes and offsets are even integers.
+- Smooth the x position over time: interpolate between samples, apply a dead zone and a maximum pan speed (px/s), and reset per clip. If the subject jumps far between samples (likely a camera cut), cut to the new position instead of panning. A jittery crop counts as a bug.
+- Keep tracking math (selection, interpolation, smoothing, clamping) in pure functions with unit tests on synthetic coordinates.
+
+## Rendering and export
+- Render by reading frames with OpenCV, cropping per frame from the smoothed path, and piping raw frames to `ffmpeg` stdin; take audio from the working video for the same time range and `-map` streams explicitly.
+- Avoid pipe deadlocks: do not read `stdout`/`stderr` with `PIPE` unless consumed concurrently. Send stderr to a log file or bounded buffer; close stdin and `wait()` with a timeout.
+- Output: H.264 `yuv420p`, AAC, `+faststart`, height `min(src_h, 1920)` scaled to an exact even 9:16 size. Use `-crf ~20 -preset veryfast` by default.
+- Export all: render missing clips, then build the ZIP with `zipfile` (stored, not deflated) inside the job directory; stream it with `FileResponse`.
+- Report progress per stage from frame counts; update job state at a bounded rate (not every frame).
+
+## Temporary files
+- Every artifact lives under its job directory (`<data_dir>/jobs/<uuid>/`): `source.*`, `working.mp4` (only if normalized), `clips/`, `exports/`, plus any optional analysis cache. Write to a temp name and rename on success; delete partial files on failure.

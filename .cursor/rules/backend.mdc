@@ -1,0 +1,50 @@
+---
+description: "FastAPI / Python 3.13 structure, API design, jobs, configuration, logging, and testing for the Video Clipper backend."
+globs:
+  - "backend/**/*.py"
+  - "backend/**/*.toml"
+  - "backend/**/requirements*.txt"
+alwaysApply: false
+---
+
+# Backend rules
+
+## Structure
+- `app/main.py`: app factory, CORS, router registration, startup checks only.
+- `app/api/`: route handlers. Parse/validate input, call one service, map results and domain errors to HTTP. No FFmpeg, OpenCV, or filesystem logic here.
+- `app/services/`: business and media logic as plain functions/classes with no FastAPI imports, so they are testable without HTTP.
+- `app/schemas/`: Pydantic v2 request/response models. `app/core/`: settings, logging, errors, path helpers.
+- Python 3.13, full type hints, `pathlib.Path` for paths. Use a `.venv`; pin direct dependencies in `requirements.txt` (file uploads also need `python-multipart`).
+
+## API design
+- JSON over REST under `/api`. Explicit `response_model` on every route. Times are float seconds.
+- Resource shape: a job (`/api/jobs`) owns its source video, detected clips, and exports. IDs are server-generated UUID4s; accept them as `uuid.UUID` path params.
+- Long work (download, analysis, rendering) returns `202` with a job ID; clients poll `GET /api/jobs/{id}`. Status is an explicit enum (`queued`, `downloading`, `analyzing`, `ready`, `rendering`, `failed`) plus progress 0–1 and a user-safe message.
+- Serve finished files with `FileResponse` and a safe download filename; never accept a file path from the client.
+
+## Jobs and concurrency
+- Run heavy work in a single-worker `ThreadPoolExecutor` (one media job at a time). This is intentional for a local tool: it bounds CPU, RAM, and disk use. No Celery/Redis/DB.
+- A simple in-memory job manager (a dict of job records behind a `threading.Lock`, accessed through one small module) is acceptable. Jobs may be lost on restart; the UI must handle an unknown job ID gracefully.
+- Persistence (e.g. JSON in the job directory, written atomically via `os.replace`) is optional; add it only if a requirement needs jobs to survive restarts.
+- Mutate job state only through the job manager, never directly from routes or services.
+- Never block the event loop: no subprocess or OpenCV calls inside `async def` handlers; use sync handlers or hand off to the executor.
+
+## Configuration
+- One `Settings` object in `app/core/config.py`, read from environment variables with safe defaults: data dir, max upload bytes, max video duration, clip length bounds, allowed CORS origin, binary paths for `ffmpeg`/`ffprobe`.
+- No secrets are needed; do not introduce any. Keep `.env.example` in sync if env vars are added.
+- At startup, verify `ffmpeg` and `ffprobe` are available and fail with a clear message if not.
+
+## Errors and logging
+- Define a small set of domain exceptions (e.g. `InvalidInputError`, `MediaProcessingError`, `NotFoundError`) and map them to HTTP codes in one exception handler.
+- Responses carry a user-safe `message`; full detail (stderr tail, traceback) goes only to logs.
+- Use the stdlib `logging` module, one logger per module, include the job ID. No `print`. Do not log full URLs with query strings or absolute home-directory paths.
+
+## Resource cleanup
+- Close files and capture handles in `finally`/context managers (`cv2.VideoCapture.release()` included).
+- Remove partial outputs on failure. On startup, delete job directories with no live job (or older than a configured TTL if persistence exists).
+
+## Testing
+- `pytest` with FastAPI `TestClient` for endpoints; unit tests for services.
+- Cover: validation failures, not-found IDs, path/ID tampering, job state transitions, and failure paths, not only the happy path.
+- Never commit video fixtures (`*.mp4` is gitignored). Generate short test videos at test time with FFmpeg `lavfi` sources in a fixture using `tmp_path`.
+- Mark tests that need FFmpeg or network (`@pytest.mark.network` for YouTube) so they can be skipped; network tests are opt-in.
