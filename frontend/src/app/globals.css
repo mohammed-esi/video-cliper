@@ -1,26 +1,287 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * Design tokens.
+ * Semantic values live on :root so components only ever reference roles
+ * (surface, fg-muted, accent…), never raw hex. Dark is the default theme
+ * because video reads best on neutral dark surfaces; light is a remap of
+ * the same roles, applied when the OS prefers it.
+ *
+ * data-theme="dark" pins a subtree to the dark values in either theme. Video
+ * surfaces use it: footage is judged on a dark frame, as in every editor.
+ */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surfaces: graphite, not navy, so footage colours are not tinted. */
+  --bg: #0b0b0e;
+  --surface: #141418;
+  --surface-raised: #1c1c22;
+  --surface-sunken: #070709;
+  --surface-hover: #24242b;
+  --border: rgb(255 255 255 / 0.08);
+  --border-strong: rgb(255 255 255 / 0.16);
+
+  /* Text */
+  --fg: #f4f4f5;
+  --fg-muted: #a1a1aa;
+  --fg-subtle: #71717a;
+
+  /* Accent marks "your clip": selection, trim handles, primary action. */
+  --accent: #ec4899;
+  --accent-hover: #f472b6;
+  /* White on this pink is only 3.5:1, so text on accent stays near-black. */
+  --accent-fg: #0b0b0e;
+  --accent-soft: rgb(236 72 153 / 0.14);
+
+  /* Status. Always pair with an icon or label, never colour alone. */
+  --info: #60a5fa;
+  --info-soft: rgb(96 165 250 / 0.14);
+  --success: #34d399;
+  --success-soft: rgb(52 211 153 / 0.14);
+  --warning: #fbbf24;
+  --warning-soft: rgb(251 191 36 / 0.14);
+  --danger: #f87171;
+  --danger-soft: rgb(248 113 113 / 0.14);
+
+  --ring: var(--accent);
+  --playhead: #ffffff;
+  /* Dims the area outside the 9:16 crop window on the 16:9 player. */
+  --crop-scrim: rgb(0 0 0 / 0.6);
+
+  --elevation-pop:
+    0 8px 24px rgb(0 0 0 / 0.45), 0 0 0 1px var(--border);
+
+  /* Motion. Tailwind has no duration namespace; use duration-(--dur-fast). */
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+
+  /* App header height; the editor layout fills the viewport below it. */
+  --header-height: 4rem;
+
+  /* Layering. Use z-(--z-toast) etc. */
+  --z-sticky: 10;
+  --z-overlay: 40;
+  --z-dialog: 50;
+  --z-toast: 60;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    color-scheme: light;
+
+    --bg: #f7f7f8;
+    --surface: #ffffff;
+    --surface-raised: #f1f1f3;
+    --surface-sunken: #e9e9ec;
+    --surface-hover: #e7e7ea;
+    --border: rgb(0 0 0 / 0.08);
+    --border-strong: rgb(0 0 0 / 0.16);
+
+    --fg: #18181b;
+    --fg-muted: #52525b;
+    --fg-subtle: #71717a;
+
+    --accent: #db2777;
+    --accent-hover: #be185d;
+    --accent-fg: #ffffff;
+    --accent-soft: rgb(219 39 119 / 0.1);
+
+    --info: #2563eb;
+    --info-soft: rgb(37 99 235 / 0.1);
+    --success: #059669;
+    --success-soft: rgb(5 150 105 / 0.1);
+    --warning: #b45309;
+    --warning-soft: rgb(180 83 9 / 0.1);
+    --danger: #dc2626;
+    --danger-soft: rgb(220 38 38 / 0.1);
+
+    --playhead: #18181b;
+    --crop-scrim: rgb(0 0 0 / 0.5);
+
+    --elevation-pop:
+      0 8px 24px rgb(0 0 0 / 0.12), 0 0 0 1px var(--border);
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Expose the semantic roles as Tailwind utilities (bg-surface, text-fg-muted…). */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --color-ring: var(--ring);
+  --color-playhead: var(--playhead);
+  --color-crop-scrim: var(--crop-scrim);
+
+  --shadow-pop: var(--elevation-pop);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+@theme {
+  /* 13px dense UI label size, between Tailwind's xs (12) and sm (14). */
+  --text-dense: 0.8125rem;
+  --text-dense--line-height: 1.125rem;
+  /* 32px import-screen title. */
+  --text-display: 2rem;
+  --text-display--line-height: 2.5rem;
+  --text-display--letter-spacing: -0.02em;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --animate-progress-indeterminate: progress-indeterminate 1.4s var(--ease-out)
+    infinite;
+
+  @keyframes progress-indeterminate {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(250%);
+    }
+  }
+}
+
+@layer base {
+  html {
+    background-color: var(--bg);
+    scrollbar-color: var(--border-strong) transparent;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  ::selection {
+    background-color: var(--accent-soft);
+    color: var(--fg);
+  }
+
+  /* Tailwind's preflight resets buttons to the default cursor. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Native range input styled to the theme. Set --range-fill (0%–100%) inline. */
+  .range-slider {
+    --range-fill: 0%;
+    appearance: none;
+    height: 1.25rem;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .range-slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: linear-gradient(
+      to right,
+      var(--accent) var(--range-fill),
+      var(--border-strong) var(--range-fill)
+    );
+  }
+
+  .range-slider::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: linear-gradient(
+      to right,
+      var(--accent) var(--range-fill),
+      var(--border-strong) var(--range-fill)
+    );
+  }
+
+  .range-slider::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border: 2px solid var(--accent);
+    border-radius: 9999px;
+    background: var(--fg);
+    transition: transform var(--dur-fast) var(--ease-out);
+  }
+
+  .range-slider::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--accent);
+    border-radius: 9999px;
+    background: var(--fg);
+    transition: transform var(--dur-fast) var(--ease-out);
+  }
+
+  .range-slider:hover::-webkit-slider-thumb,
+  .range-slider:focus-visible::-webkit-slider-thumb {
+    transform: scale(1.2);
+  }
+
+  .range-slider:hover::-moz-range-thumb,
+  .range-slider:focus-visible::-moz-range-thumb {
+    transform: scale(1.2);
+  }
+
+  .range-slider:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
