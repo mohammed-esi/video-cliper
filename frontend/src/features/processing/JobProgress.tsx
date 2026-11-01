@@ -16,9 +16,14 @@ import { cn } from "@/lib/cn";
 
 export type JobStage = "importing" | "analyzing" | "processing" | "completed";
 
+/** Matches backend operations shown on the processing screen. */
+export type JobProgressPipeline = "default" | "generate_clips";
+
 export interface JobProgressProps {
   /** Decides the wording of the first stage. */
   source: "upload" | "youtube";
+  /** When `generate_clips`, hides analysis/subject-tracking steps that do not run yet. */
+  pipeline?: JobProgressPipeline;
   stage: JobStage;
   /** Progress within the current stage, 0–1. Omit while unknown. */
   progress?: number;
@@ -30,8 +35,9 @@ export interface JobProgressProps {
   error?: string | null;
   onRetry?: () => void;
   onStartOver?: () => void;
-  /** Shown while running, e.g. to abandon the job. */
+  /** Shown while running; does not cancel backend work. */
   onCancel?: () => void;
+  cancelLabel?: string;
   /** Shown when completed: "Review clips". */
   onContinue?: () => void;
   className?: string;
@@ -42,6 +48,7 @@ type StepState = "done" | "active" | "failed" | "pending";
 /** Processing status card: stage checklist, overall progress, and outcome actions. */
 export function JobProgress({
   source,
+  pipeline = "default",
   stage,
   progress,
   message,
@@ -50,27 +57,40 @@ export function JobProgress({
   onRetry,
   onStartOver,
   onCancel,
+  cancelLabel = "Back to import",
   onContinue,
   className,
 }: JobProgressProps) {
-  const steps = [
-    {
-      id: "importing",
-      label:
-        source === "youtube" ? "Downloading from YouTube" : "Uploading video",
-      description: "Bringing your video into the editor.",
-    },
-    {
-      id: "analyzing",
-      label: "Analyzing video",
-      description: "Finding clip boundaries and tracking the speaker.",
-    },
-    {
-      id: "processing",
-      label: "Preparing clips",
-      description: "Creating a preview for each clip.",
-    },
-  ] as const;
+  const importStep = {
+    id: "importing",
+    label:
+      source === "youtube" ? "Downloading from YouTube" : "Uploading video",
+    description: "Bringing your video into the editor.",
+  } as const;
+
+  const steps =
+    pipeline === "generate_clips"
+      ? ([
+          importStep,
+          {
+            id: "processing",
+            label: "Generating clips",
+            description: "Splitting your video into clip files with FFmpeg.",
+          },
+        ] as const)
+      : ([
+          importStep,
+          {
+            id: "analyzing",
+            label: "Analyzing video",
+            description: "Finding clip boundaries and tracking the speaker.",
+          },
+          {
+            id: "processing",
+            label: "Preparing clips",
+            description: "Creating a preview for each clip.",
+          },
+        ] as const);
 
   const isCompleted = stage === "completed";
   const hasFailed = Boolean(error) && !isCompleted;
@@ -231,7 +251,7 @@ export function JobProgress({
           )}
           {!hasFailed && !isCompleted && onCancel && (
             <Button variant="ghost" icon={<X />} onClick={onCancel}>
-              Cancel
+              {cancelLabel}
             </Button>
           )}
           {isCompleted && onContinue && (

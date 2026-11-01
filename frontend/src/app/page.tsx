@@ -1,8 +1,7 @@
 import { Film, ScanFace, SlidersHorizontal } from "lucide-react";
 
-import { BackendStatus } from "@/components/BackendStatus";
 import { AppHeader } from "@/components/layout/AppHeader";
-import { ImportScreen } from "@/features/import/ImportScreen";
+import { ImportScreenEntry } from "@/features/import/ImportScreenEntry";
 
 const HIGHLIGHTS = [
   {
@@ -25,7 +24,7 @@ const HIGHLIGHTS = [
 export default function Home() {
   return (
     <>
-      <AppHeader currentStep="import" status={<BackendStatus />} />
+      <AppHeader currentStep="import" />
       <main id="main" className="flex-1">
         <div className="mx-auto grid w-full max-w-6xl gap-10 px-4 py-10 sm:px-6 md:py-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,32rem)] lg:gap-x-16 lg:gap-y-8 lg:py-24">
           <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 lg:mx-0 lg:max-w-xl lg:pt-6">
@@ -43,7 +42,7 @@ export default function Home() {
           </div>
 
           <div className="mx-auto w-full max-w-2xl lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:max-w-none">
-            <ImportScreen />
+            <ImportScreenEntry />
           </div>
 
           <ul className="mx-auto flex w-full max-w-2xl flex-col gap-4 md:flex-row md:gap-6 lg:mx-0 lg:max-w-xl lg:flex-col lg:gap-4">

@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, Link2, Upload } from "lucide-react";
+import { CheckCircle2, Link2, LoaderCircle, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { ErrorState } from "@/components/ui/ErrorState";
+import { ProgressBar } from "@/components/ui/ProgressBar";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { Tabs, type TabItem } from "@/components/ui/Tabs";
 import type { VideoUploadResponse } from "@/lib/api";
@@ -36,6 +38,19 @@ export type ImportState =
       status: "url-import-complete";
       video: VideoUploadResponse;
       label: string;
+    }
+  | {
+      status: "starting-processing";
+      source: "upload" | "youtube";
+      video: VideoUploadResponse;
+      label: string;
+    }
+  | {
+      status: "processing-start-error";
+      source: "upload" | "youtube";
+      video: VideoUploadResponse;
+      label: string;
+      message: string;
     };
 
 export interface ImportPanelProps {
@@ -48,6 +63,7 @@ export interface ImportPanelProps {
   onRetryUpload: () => void;
   /** Clears a completed or failed import and returns to the idle form. */
   onResetImport: () => void;
+  onRetryProcessingStart?: () => void;
 }
 
 function ImportCompletePanel({
@@ -118,6 +134,7 @@ export function ImportPanel({
   onCancelUpload,
   onRetryUpload,
   onResetImport,
+  onRetryProcessingStart,
 }: ImportPanelProps) {
   const [selectedMethod, setSelectedMethod] = useState<ImportMethod>("youtube");
 
@@ -128,14 +145,65 @@ export function ImportPanel({
   const isYoutubeFlow =
     state.status === "submitting-url" ||
     state.status === "url-error" ||
-    state.status === "url-import-complete";
+    state.status === "url-import-complete" ||
+    (state.status === "starting-processing" && state.source === "youtube") ||
+    (state.status === "processing-start-error" && state.source === "youtube");
+  const isProcessingHandoff =
+    state.status === "starting-processing" ||
+    state.status === "processing-start-error";
   const method: ImportMethod = isUploadFlow
     ? "upload"
     : isYoutubeFlow
       ? "youtube"
       : selectedMethod;
   const isBusy =
-    state.status === "submitting-url" || state.status === "uploading";
+    state.status === "submitting-url" ||
+    state.status === "uploading" ||
+    state.status === "starting-processing";
+
+  if (isProcessingHandoff) {
+    return (
+      <Card className="p-5 shadow-pop sm:p-6">
+        <h2 className="sr-only">Preparing clips</h2>
+        {state.status === "starting-processing" ? (
+          <div className="flex flex-col gap-5">
+            <div className="flex items-start gap-3">
+              <span
+                className="flex size-10 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent"
+                aria-hidden
+              >
+                <LoaderCircle className="size-5 animate-spin" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-fg">
+                  Starting clip generation
+                </p>
+                <p
+                  className="truncate text-sm text-fg-muted"
+                  title={state.label}
+                >
+                  {state.label}
+                </p>
+              </div>
+            </div>
+            <ProgressBar label="Connecting to processing…" value={undefined} />
+          </div>
+        ) : (
+          <ErrorState
+            size="sm"
+            title="Couldn't start processing"
+            message={state.message}
+            onRetry={onRetryProcessingStart}
+            secondaryAction={
+              <Button variant="secondary" onClick={onResetImport}>
+                Start over
+              </Button>
+            }
+          />
+        )}
+      </Card>
+    );
+  }
 
   return (
     <Card className="p-5 shadow-pop sm:p-6">

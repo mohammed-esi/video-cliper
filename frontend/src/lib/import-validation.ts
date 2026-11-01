@@ -46,8 +46,13 @@ export function parseYoutubeUrl(input: string): YoutubeUrlResult {
     return { ok: false, message: "This doesn't look like a web link." };
   }
 
-  const isHttp = url.protocol === "https:" || url.protocol === "http:";
-  if (!isHttp || !YOUTUBE_HOSTS.has(url.hostname.toLowerCase())) {
+  if (url.protocol === "http:") {
+    return { ok: false, message: "Use a secure https:// YouTube link." };
+  }
+  if (url.protocol !== "https:") {
+    return { ok: false, message: "Use a secure https:// YouTube link." };
+  }
+  if (!YOUTUBE_HOSTS.has(url.hostname.toLowerCase())) {
     return { ok: false, message: "Use a link from youtube.com or youtu.be." };
   }
 

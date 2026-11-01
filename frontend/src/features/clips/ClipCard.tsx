@@ -1,8 +1,16 @@
-import type { ReactNode } from "react";
+"use client";
+
+import { useEffect, useState, type ReactNode } from "react";
 import { Film, ImageOff, LoaderCircle } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { formatTimecode } from "@/lib/format";
+
+import {
+  CLIP_THUMBNAIL_IMG_LOADING,
+  CLIP_THUMBNAIL_LOAD_TIMEOUT_MS,
+  deriveClipThumbnailDisplayState,
+} from "./clip-card-thumbnail-state";
 
 export type ClipCardStatus = "ready" | "loading" | "error";
 
@@ -39,6 +47,32 @@ export function ClipCard({
   exportSlot,
   className,
 }: ClipCardProps) {
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [timedOutUrl, setTimedOutUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!thumbnailUrl) {
+      return;
+    }
+    if (loadedUrl === thumbnailUrl || failedUrl === thumbnailUrl) {
+      return;
+    }
+    const url = thumbnailUrl;
+    const timer = window.setTimeout(() => {
+      setTimedOutUrl(url);
+    }, CLIP_THUMBNAIL_LOAD_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [thumbnailUrl, loadedUrl, failedUrl]);
+
+  const thumbnailDisplay = deriveClipThumbnailDisplayState({
+    status,
+    thumbnailUrl,
+    loadedUrl,
+    failedUrl,
+    timedOut: timedOutUrl === thumbnailUrl,
+  });
+
   return (
     <article
       className={cn(
@@ -50,15 +84,46 @@ export function ClipCard({
         className,
       )}
     >
-      <div className="relative aspect-video w-24 shrink-0 overflow-hidden rounded-sm bg-surface-sunken">
+      <div className="relative aspect-[9/16] w-[4.5rem] shrink-0 overflow-hidden rounded-sm bg-surface-sunken">
         {status === "ready" && thumbnailUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element -- served by the local backend, not optimisable by next/image
-          <img
-            src={thumbnailUrl}
-            alt=""
-            loading="lazy"
-            className="size-full object-cover"
-          />
+          <>
+            {thumbnailDisplay !== "ready" && (
+              <span
+                className={cn(
+                  "absolute inset-0 z-1 flex items-center justify-center [&_svg]:size-5",
+                  thumbnailDisplay === "error" ? "text-danger" : "text-fg-subtle",
+                )}
+                aria-hidden
+              >
+                {thumbnailDisplay === "loading" ? (
+                  <LoaderCircle className="animate-spin" />
+                ) : (
+                  <ImageOff />
+                )}
+              </span>
+            )}
+            {/* Must stay visible to the browser (no display:none) so eager load can run. */}
+            {/* eslint-disable-next-line @next/next/no-img-element -- local backend JPEG */}
+            <img
+              key={thumbnailUrl}
+              src={thumbnailUrl}
+              alt=""
+              loading={CLIP_THUMBNAIL_IMG_LOADING}
+              decoding="async"
+              className={cn(
+                "relative z-0 size-full object-cover transition-opacity duration-(--dur-fast)",
+                thumbnailDisplay === "ready" ? "opacity-100" : "opacity-0",
+              )}
+              onLoad={() => {
+                setLoadedUrl(thumbnailUrl);
+                setFailedUrl(null);
+                setTimedOutUrl(null);
+              }}
+              onError={() => {
+                setFailedUrl(thumbnailUrl);
+              }}
+            />
+          </>
         ) : (
           <span
             className={cn(
@@ -86,7 +151,7 @@ export function ClipCard({
             className="size-3.5 cursor-pointer accent-accent"
           />
         </label>
-        <span className="absolute right-1 bottom-1 rounded-[3px] bg-black/75 px-1 font-mono text-[11px] leading-4 text-white tabular-nums">
+        <span className="absolute right-1 bottom-1 z-10 rounded-[3px] bg-black/75 px-1 font-mono text-[11px] leading-4 text-white tabular-nums">
           {formatTimecode(end - start)}
         </span>
       </div>

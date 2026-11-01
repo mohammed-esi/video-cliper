@@ -42,14 +42,17 @@ export function AppHeader({
             !fullWidth && "max-w-7xl",
           )}
         >
-          <div className="flex shrink-0 items-center gap-2.5">
+          <div
+            className="flex shrink-0 items-center gap-2.5"
+            aria-label="Video Clipper"
+          >
             <span
               className="flex size-8 items-center justify-center rounded-md bg-accent text-accent-fg"
               aria-hidden
             >
               <Scissors className="size-4" strokeWidth={2.25} />
             </span>
-            <span className="text-base font-semibold tracking-tight">
+            <span className="hidden text-base font-semibold tracking-tight md:inline">
               Video Clipper
             </span>
           </div>

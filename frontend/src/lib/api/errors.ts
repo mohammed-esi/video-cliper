@@ -48,3 +48,10 @@ export function userFacingImportError(error: unknown): string {
   }
   return "We couldn't import this video. Please try again.";
 }
+
+export function userFacingJobError(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    return error.message;
+  }
+  return "We couldn't start processing. Please try again.";
+}

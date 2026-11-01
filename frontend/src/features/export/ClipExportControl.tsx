@@ -66,9 +66,11 @@ export function ClipExportControl({
       {status.state === "rendering" && (
         <div className="flex flex-col gap-2 rounded-md border border-border bg-bg p-3">
           <ProgressBar
-            label="Rendering"
+            label="Rendering portrait"
             value={status.progress}
-            valueText={status.progress === undefined ? "Starting…" : undefined}
+            valueText={
+              status.progress === undefined ? "This may take a minute…" : undefined
+            }
             tone="accent"
           />
           <p className="text-dense text-fg-muted">
@@ -159,11 +161,7 @@ function CompactControl({
             hideLabel
             className="max-w-24 min-w-10 flex-1"
           />
-          <span className="shrink-0 font-mono text-dense text-fg-muted tabular-nums">
-            {status.progress === undefined
-              ? "Starting…"
-              : `${Math.round(status.progress * 100)}%`}
-          </span>
+          <span className="sr-only">Rendering portrait</span>
         </>
       )}
 
