@@ -1,5 +1,5 @@
 ---
-description: "Next.js 16 / React 19 / Tailwind v4 conventions for the Video Clipper UI: components, API calls, media previews, UX states."
+description: "Next.js 16 / React 19 / Tailwind v4 conventions for the Video Clipper UI: Claude design system reuse, structure, API calls, media previews, UX states."
 globs:
   - "frontend/**/*.ts"
   - "frontend/**/*.tsx"
@@ -19,6 +19,16 @@ alwaysApply: false
 - `src/features/<feature>/`: feature UI and hooks (e.g. `import`, `clips`, `export`).
 - `src/components/`: generic, reusable UI primitives with no backend knowledge.
 - `src/lib/`: API client, shared types, pure helpers (time formatting, validation).
+- **Roles:** Claude-authored UI lives in `src/components/` and presentational `src/features/*` pieces; Cursor adds behavior via thin wrappers (e.g. `*Screen.tsx`), `src/lib/api`, and hooks—without restyling those components.
+
+## UI reuse and design system (mandatory)
+- **Existing UI first:** Before creating or editing components, read `src/components/`, `src/features/`, and `globals.css`. Prefer composing or extending what exists over new parallel components.
+- **Preserve the design system:** Use existing tokens, typography, colors, spacing, and breakpoints (`@theme` in `globals.css`, shared `components/ui/*`). Do not introduce a second visual language, ad-hoc one-off styling, or new CSS frameworks.
+- **Follow established patterns:** Match current naming, props, `'use client'` boundaries, and TypeScript style in neighboring files.
+- **Functional integration:** Wire APIs and state in feature containers or `src/lib`; keep Claude’s presentational components visually unchanged. Reuse existing loading, error, empty, progress, and disabled patterns (see UX section below)—do not rewrite working UI for logic alone.
+- **New UI only when needed:** If nothing fits, extend an existing primitive first; otherwise add a reusable component in `src/components/ui/` or the relevant feature, styled like its peers. No new UI libraries without user approval.
+- **Design changes need approval:** Do not perform major redesigns, replace the design system, or restructure established layouts/components on your own. Propose significant visual or UX changes and wait for approval.
+- **Minimal diffs:** Do not refactor unrelated frontend files or alter working Claude UI without a concrete task reason.
 
 ## Server vs Client Components
 - Default to Server Components. Add `'use client'` only on the smallest component that needs state, effects, event handlers, or media elements.
@@ -36,8 +46,19 @@ alwaysApply: false
 - Client-side validation (start < end, within duration, min/max clip length) mirrors the backend for fast feedback; the backend remains authoritative.
 
 ## Media previews
-- Preview edits by playing the working video served by the backend between `start` and `end` with `currentTime` and a `timeupdate` guard. Do not re-render a clip to preview a time change.
-- Show the 9:16 crop as an overlay on the 16:9 player; render real vertical files only on export.
+
+### Target architecture (Phase 2.5+; see `video-processing.mdc`)
+- **Original tab:** Play the imported **source** video from the backend (full aspect ratio). Manual trimming still defines the selected **source timeline** range (`start_time` / `end_time`); use `currentTime` and a `timeupdate` guard when constraining playback to that window on the source.
+- **Clip tab:** Play the **actual rendered 9:16 portrait MP4** for the active clip (same file used for export). Do not simulate portrait framing with a CSS overlay on the 16:9 source in the final implementation.
+- **One asset:** Portrait preview and exported clip must use the **same** backend-rendered portrait file per clip.
+- **After trim save:** When saved boundaries change, the backend regenerates the portrait from the new range and **cached tracking data** (not on every drag frame). Poll job status or equivalent until the new file is ready.
+- **Stale or missing portrait:** If the render for the current trim revision is not ready, show an explicit **loading** or **unavailable** state (reuse existing StatusPill / media empty-error patterns). **Never** show an older portrait that does not match the saved trim range.
+- While dragging the trimmer, keep **local** range updates only; do not require a new portrait render until the debounced save completes.
+
+### Until portrait preview is integrated (current behavior)
+- The editor may continue to preview the **Clip** tab by playing the **source** stream between saved `start` and `end` with a playback window. **Do not remove or break this** in early Phase 2.5 tasks; switch the Clip tab to the portrait stream only in the dedicated preview-integration phase once backend renders exist.
+
+### All preview modes
 - Revoke any `URL.createObjectURL` value when done; pause and detach media on unmount.
 - Use `preload="metadata"` for lists of clips; never autoplay with sound.
 

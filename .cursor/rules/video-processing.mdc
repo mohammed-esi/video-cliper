@@ -9,18 +9,20 @@ alwaysApply: false
 # Video-processing rules
 
 ## Pipeline (keep this shape)
-1. Import: upload or yt-dlp download → probe → normalize only if needed.
-2. Analyze: segmentation + subject positions on a low-res sample.
+1. Import: upload or yt-dlp download → probe → optional normalize **only when a demonstrated compatibility issue requires it**.
+2. Analyze (source, once): run face detection on the source timeline; cache results; derive subject tracks and scene boundaries from cached detections and frame content. **Do not re-run detection on every trim.**
 3. Edit: user changes clip times (metadata only; no rendering).
-4. Export: render requested clips at full quality; optional ZIP.
+4. Render: build or refresh portrait MP4s from cached analysis + current trim bounds (separate from saving trim). Export reuses the same portrait files; optional ZIP.
 
-## Probing and normalization
+Existing import, time-based clip generation, trim persistence, thumbnails, source playback, and job progress must keep working while Phase 2.5 is added incrementally.
+
+## Probing and source compatibility
 - Use `ffprobe -v error -print_format json -show_format -show_streams` and parse JSON; never scrape text output.
 - Require a video stream. Read width, height, duration, rotation, and frame rate from the probe; handle a missing audio stream gracefully.
-- Decide from the probe whether to normalize. Keep the original as-is when it is already browser- and pipeline-friendly (MP4/MOV container, H.264 `yuv420p` video, AAC or no audio, no rotation metadata).
-- Normalize (once, to H.264 `yuv420p` + AAC MP4, `+faststart`) only when something is incompatible: other codecs/containers (YouTube often gives VP9/AV1/WebM), unusual pixel formats, rotation, or clearly variable frame rate (`avg_frame_rate` far from `r_frame_rate`).
-- Keep this decision in one pure function of the probe result so it is unit-testable. The video the app uses afterwards is called the *working video* (original or normalized).
-- When reading frames from a non-normalized source, use frame timestamps (`CAP_PROP_POS_MSEC`), not `frame_index / fps`.
+- **Prefer decoding the imported source directly** with FFmpeg and OpenCV where supported. Normalization is **not** mandatory up front.
+- Normalize (once, to H.264 `yuv420p` + AAC MP4, `+faststart`) **only when integration tests or a specific source prove incompatibility** (e.g. codec OpenCV/FFmpeg cannot read reliably, rotation metadata, unusual pixel format, or clearly broken timing). Keep the decision in one pure function of the probe result so it is unit-testable.
+- When the pipeline uses a normalized copy, store it as `working.mp4` under the job directory; otherwise analysis and render use `source.*`.
+- When reading frames for detection, use frame timestamps (`CAP_PROP_POS_MSEC`), not `frame_index / fps`.
 - Inputs are 16:9-ish landscape. Reject portrait or extreme aspect ratios with a clear message rather than producing a bad crop.
 
 ## Segmentation
@@ -33,20 +35,52 @@ alwaysApply: false
 - Times are float seconds internally. Clamp and validate `0 ≤ start < end ≤ duration` and length bounds before any FFmpeg call.
 - Exact cuts require re-encoding: `-ss <start>` before `-i` plus `-t <length>`, with re-encode. Never `-c copy` for clips; it snaps to keyframes.
 
-## Subject tracking and crop
-- Detector: OpenCV `cv2.FaceDetectorYN` (YuNet ONNX model stored in the repo under `backend/models/` with its license noted). No Haar cascades as the primary detector; no frame-by-frame OpenCV trackers.
-- Sample frames at ~4–5 fps on a downscaled copy (e.g. 640 px wide) and map coordinates back to source pixels with one explicit scale factor.
-- Choose one primary subject per segment (largest/most persistent face). When no face is found, hold the last known position; if none, use the frame center.
-- Crop geometry: `crop_w = even(round(src_h * 9 / 16))`, `crop_h = even(src_h)`, `x = clamp(center_x - crop_w/2, 0, src_w - crop_w)`. All crop sizes and offsets are even integers.
-- Smooth the x position over time: interpolate between samples, apply a dead zone and a maximum pan speed (px/s), and reset per clip. If the subject jumps far between samples (likely a camera cut), cut to the new position instead of panning. A jittery crop counts as a bug.
-- Keep tracking math (selection, interpolation, smoothing, clamping) in pure functions with unit tests on synthetic coordinates.
+## Face detection (OpenCV + YuNet)
+- Initial detector: OpenCV `cv2.FaceDetectorYN` with a YuNet ONNX model in `backend/models/` (license noted in repo). No Haar cascades as the primary detector.
+- **OpenCV is for detection and low-res sampling only**, not full-resolution video rendering.
+- **Validate YuNet on real assessment-style footage** (install, accuracy, speed on macOS CPU) **before** wiring detection into clip generation or render jobs.
+- Run detection over the **source timeline once** (sample at ~4–5 fps on a downscaled copy, e.g. 640 px wide); map boxes back to source pixels with one explicit scale factor. Persist results in a **detection cache** under the job directory.
+- When the user changes clip `start_time` / `end_time`, **reuse the cached detection file** and re-derive clip-local tracks and crop paths. **Do not automatically re-decode the full source for detection on each trim save.**
+
+## Primary-subject tracking and scene boundaries
+- **Tracking uses temporal continuity** across sampled times and within shots. Do **not** pick the primary face independently on every frame from size alone.
+- Associate detections into tracks; handle temporary loss of face, brief occlusions, and multiple faces (one primary subject per clip/shooting segment).
+- **Scene changes** must be detected from **actual video/frame content** (e.g. FFmpeg `scdet`, histogram/scene metrics, or equivalent)—**not** from a large jump in face position alone.
+- Reset or re-initialize tracking logic at real scene boundaries. Keep selection, association, and track logic testable (pure functions where possible, fixtures for synthetic detection series).
+
+## Tracking metadata (detection vs tracking)
+- Store **detection data** and **tracking / crop-path data** in **separate** on-disk artifacts so smoothing and tracking parameters can be tuned or recomputed **without re-running face detection or re-decoding the source**.
+- Invalidate or version render outputs when trim bounds change; tracking slices should reference source times and detection cache version.
+
+## Crop geometry and trajectory
+- Crop geometry: `crop_w = even(round(active_h * 9 / 16))`, `crop_h = even(active_h)`, `x = clamp(center_x - crop_w/2, 0, active_w - crop_w)`. All crop sizes and offsets are **even integers**. `active_w` / `active_h` are the **picture area** used for cropping (see letterboxing below).
+- **Offline smoothing** of the horizontal crop path is appropriate for prerecorded clips (interpolate between control points, optional dead zone to reduce micro-jitter). **Do not impose a rigid maximum pan speed** that can leave the main subject outside the 9:16 window when they move quickly.
+- A jittery crop or a subject routinely clipped out of frame counts as a bug.
+- When the source has **letterboxing or pillarboxing**, detect or infer the active picture region and apply crop/clamp logic against that region so black bars are not treated as content.
+- Keep crop-path math (geometry, interpolation, smoothing, clamping) in pure functions with unit tests on synthetic coordinates.
 
 ## Rendering and export
-- Render by reading frames with OpenCV, cropping per frame from the smoothed path, and piping raw frames to `ffmpeg` stdin; take audio from the working video for the same time range and `-map` streams explicitly.
-- Avoid pipe deadlocks: do not read `stdout`/`stderr` with `PIPE` unless consumed concurrently. Send stderr to a log file or bounded buffer; close stdin and `wait()` with a timeout.
-- Output: H.264 `yuv420p`, AAC, `+faststart`, height `min(src_h, 1920)` scaled to an exact even 9:16 size. Use `-crf ~20 -preset veryfast` by default.
-- Export all: render missing clips, then build the ZIP with `zipfile` (stored, not deflated) inside the job directory; stream it with `FileResponse`.
-- Report progress per stage from frame counts; update job state at a bounded rate (not every frame).
+- **Preferred pipeline:** OpenCV face detection → Python tracking and crop-path calculation → **FFmpeg dynamic crop and encode** → H.264/AAC portrait MP4.
+- **Default render strategy:** FFmpeg **`crop`** with time-varying position via **`sendcmd`** (or an equivalent FFmpeg-native dynamic crop), driven by the precomputed crop path. Validate this approach with **real integration tests** on representative clips; adjust filter syntax only as needed to pass those tests.
+- **Do not** use full-resolution **OpenCV per-frame crop + raw-frame piping to FFmpeg stdin** as the default architecture. If piping is ever used as a fallback, follow subprocess safety below and get approval first.
+- Map audio from the same source (or `working.mp4` if used) for the clip time range; `-map` streams explicitly. Output: H.264 `yuv420p`, AAC when present, `+faststart`, height `min(active_h, 1920)` scaled to an exact even 9:16 size. Use `-crf ~20 -preset veryfast` by default unless a later task specifies otherwise.
+- Avoid pipe deadlocks: do not read `stdout`/`stderr` with `PIPE` unless consumed concurrently. Send stderr to a log file or bounded buffer; close stdin and `wait()` with a timeout when stdin is used.
+- **Preview and export use the same rendered portrait file** per clip (e.g. under `clips/` or a dedicated portrait path—choose one layout per task spec). The **Clip** tab plays that 9:16 asset; the **Original** tab continues to play the full source aspect ratio.
+- Export all: ensure portrait files exist for requested clips, then build the ZIP with `zipfile` (stored, not deflated) inside the job directory; stream it with `FileResponse`.
+- Report progress per stage from frame counts or render milestones; update job state at a bounded rate (not every frame).
+
+## Trimming vs portrait render
+- Saving trim timestamps (**PATCH**) and **rendering** portrait videos are **separate operations**. PATCH updates manifest metadata only (same as today for trim semantics).
+- After trim **settles** (debounced save on the client—not on every PATCH during drag), enqueue or trigger portrait regeneration that **reuses cached detection/tracking** for the new `[start_time, end_time]`.
+- **Do not** start a full render on every PATCH request.
+- Guard against **stale renders**: tag outputs with the trim range (or revision) they were built for; do not serve or atomically replace a preview if a newer trim revision exists.
+
+## Phase 2.5 implementation order (safety)
+Implement incrementally; do not wire everything in one step:
+1. Validate real YuNet detection on sample videos (standalone script or tests).
+2. Validate tracking + crop-path generation from cached detections (unit tests + short fixtures).
+3. Validate **one** genuine 9:16 MP4 with correct audio via the FFmpeg crop/`sendcmd` path.
+4. Only then integrate into jobs, clip generation flow, frontend Clip-tab playback, and export.
 
 ## Temporary files
-- Every artifact lives under its job directory (`<data_dir>/jobs/<uuid>/`): `source.*`, `working.mp4` (only if normalized), `clips/`, `exports/`, plus any optional analysis cache. Write to a temp name and rename on success; delete partial files on failure.
+- Every artifact lives under its job directory (`<data_dir>/jobs/<uuid>/`): `source.*`, optional `working.mp4`, detection cache, tracking/crop-path cache, `clips/` (portrait outputs), `exports/`, `thumbnails/`, etc. Write to a temp name and rename on success; delete partial files on failure.
