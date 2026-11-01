@@ -131,16 +131,28 @@ def parse_ffprobe_payload(payload: dict) -> ProbeResult:
     )
 
 
+def ffprobe_input_argument(path: Path) -> str:
+    """Build a file:-prefixed input so ffprobe cannot open network URLs from the path."""
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        raise UnsupportedMediaError("This file is not a supported video.")
+    return f"file:{resolved.as_posix()}"
+
+
 def run_ffprobe(path: Path, settings: Settings) -> ProbeResult:
+    input_arg = ffprobe_input_argument(path)
     command = [
         settings.ffprobe_path,
+        "-protocol_whitelist",
+        "file,pipe",
         "-v",
         "error",
         "-print_format",
         "json",
         "-show_format",
         "-show_streams",
-        str(path),
+        "-i",
+        input_arg,
     ]
     try:
         completed = subprocess.run(
@@ -149,6 +161,7 @@ def run_ffprobe(path: Path, settings: Settings) -> ProbeResult:
             capture_output=True,
             text=True,
             timeout=settings.ffprobe_timeout_seconds,
+            stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired as exc:
         logger.warning("ffprobe timed out for upload validation")
@@ -170,6 +183,11 @@ def run_ffprobe(path: Path, settings: Settings) -> ProbeResult:
 
 
 def enforce_probe_limits(result: ProbeResult, settings: Settings) -> None:
+    """Apply upload/import size limits from Settings (local files may be up to 4K).
+
+    YouTube downloads are capped at 1080p separately in youtube_download before
+    finalize; later processing may normalize to a working resolution.
+    """
     if result.duration_seconds > settings.max_duration_seconds:
         raise InvalidInputError(
             "This video is too long. Choose a shorter file or trim it first."

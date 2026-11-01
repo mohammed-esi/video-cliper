@@ -6,7 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes.health import router as health_router
+from app.api.routes.jobs import router as jobs_router
 from app.api.routes.videos import router as videos_router
+from app.services.processing_worker import shutdown as shutdown_processing_worker
+from app.services.processing_worker import start as start_processing_worker
 from app.core.binaries import verify_media_binaries
 from app.core.config import get_settings
 from app.core.errors import AppError
@@ -20,7 +23,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     verify_media_binaries(settings)
+    start_processing_worker(settings)
     yield
+    shutdown_processing_worker()
 
 
 def create_app() -> FastAPI:
@@ -36,6 +41,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(health_router, prefix="/api")
     app.include_router(videos_router, prefix="/api")
+    app.include_router(jobs_router, prefix="/api")
 
     @app.exception_handler(AppError)
     async def handle_app_error(_request: Request, exc: AppError) -> JSONResponse:

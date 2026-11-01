@@ -1,3 +1,9 @@
+"""Startup checks for ffprobe/ffmpeg.
+
+Both binaries must be available before the API starts: ffprobe validates
+imports; ffmpeg is required for YouTube stream merges and the processing pipeline.
+"""
+
 import logging
 import shutil
 from pathlib import Path
@@ -25,8 +31,7 @@ def verify_media_binaries(settings: Settings) -> None:
 
     ffmpeg = _resolve_binary(settings.ffmpeg_path)
     if ffmpeg is None:
-        logger.warning(
-            "ffmpeg was not found (%r). Uploads will still work; video processing "
-            "features will fail until ffmpeg is available.",
-            settings.ffmpeg_path,
+        raise RuntimeError(
+            "ffmpeg was not found. Install FFmpeg and ensure ffmpeg is on your PATH, "
+            f"or set FFMPEG_PATH (currently {settings.ffmpeg_path!r})."
         )
