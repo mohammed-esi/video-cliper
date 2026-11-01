@@ -24,6 +24,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# Local upload storage
+data/
+
 # Generated video files
 *.mp4
 *.mov

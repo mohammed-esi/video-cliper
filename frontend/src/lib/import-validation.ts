@@ -53,20 +53,12 @@ export function parseYoutubeUrl(input: string): YoutubeUrlResult {
 
   const [, section, pathId] = url.pathname.split("/");
 
-  // Shorts are already vertical, and the clipper expects a landscape source.
-  if (section === "shorts") {
-    return {
-      ok: false,
-      message: "Shorts are already vertical. Use a regular YouTube video link.",
-    };
-  }
-
   let candidate: string | null | undefined;
   if (url.hostname === "youtu.be") {
     candidate = section;
   } else if (url.pathname === "/watch") {
     candidate = url.searchParams.get("v");
-  } else if (section === "embed" || section === "live") {
+  } else if (section === "embed" || section === "live" || section === "shorts") {
     candidate = pathId;
   }
 

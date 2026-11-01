@@ -72,7 +72,7 @@ export function YoutubeUrlForm({
         onChange={(event) => handleChange(event.target.value)}
         onBlur={handleBlur}
         disabled={isSubmitting}
-        hint="Paste a link to a public, landscape video."
+        hint="Paste a link to a public YouTube video you’re allowed to download."
         error={visibleError}
       />
       <Button
