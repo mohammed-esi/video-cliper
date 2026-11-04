@@ -30,7 +30,7 @@ yarn install
 yarn dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The homepage shows **Backend connected** when the API is reachable, or **Backend unavailable** if it is not.
+Open [http://localhost:3000](http://localhost:3000). Confirm the API with the [health check](#getting-started-backend) before importing a video.
 
 The frontend reads `NEXT_PUBLIC_API_BASE_URL` from `frontend/.env.local` (see `frontend/.env.example`). Use the same host the browser can reach; the backend CORS default allows `http://localhost:3000`.
 
@@ -90,17 +90,48 @@ Requires **yt-dlp** on the machine running the backend (installed via `pip insta
 Operations:
 
 - **`lifecycle_test`** — verifies the worker queue (no media output).
-- **`generate_clips`** — splits the imported source video into fixed-length MP4 clips (default **60s**, configurable via `CLIP_TARGET_DURATION_SECONDS`) with FFmpeg (H.264 + AAC when audio exists). Completed jobs return clip metadata; persisted clips are listed at `GET /api/videos/{video_id}/clips` and streamed at `GET /api/videos/{video_id}/clips/{clip_id}` (supports **Range** requests).
+- **`generate_clips`** — splits the imported source into fixed-length **landscape** MP4 segments (default **60s**, configurable via `CLIP_TARGET_DURATION_SECONDS`) with FFmpeg (H.264 + AAC when audio exists). These files are 16:9-style working clips for trimming in the editor; they are **not** face-tracked 9:16 exports. Completed jobs return clip metadata; clips are listed at `GET /api/videos/{video_id}/clips` and streamed at `GET /api/videos/{video_id}/clips/{clip_id}` (supports **Range** requests).
+- **`render_portrait_clip`** — enqueued by the portrait API (below): face-aware 9:16 render for one clip’s **saved** trim range.
+- **`batch_export_clips`** — enqueued by the batch export API: renders portrait MP4s for selected clips (reusing cache when possible) and builds a ZIP.
 
-Job metadata is stored under `DATA_DIR/processing_jobs/`. After a restart, jobs that were `queued` or `processing` are marked **failed** with an interrupted message.
+Job metadata is stored under `DATA_DIR/processing_jobs/`. After a restart, jobs that were `queued` or `processing` are marked **failed** with an interrupted message. Only **one** active processing job per `video_id` is allowed at a time; concurrent requests receive **409** until the current job finishes.
 
 `GET /api/videos/{video_id}/source` streams the imported `source.*` file for browser playback (supports **Range** requests). **Local assessment only** — there is no authentication; do not expose this API on the public internet.
 
-### Face tracking foundation (Phase 2.5.1, not wired into the API yet)
+### End-to-end workflow (Part 1)
 
-`backend/app/services/tracking/` analyzes a source video once (YuNet face detection from the bundled model in `backend/models/`, scene cuts, primary-subject tracking, 9:16 crop path) and caches the results as JSON under `DATA_DIR/jobs/<video_id>/analysis/`. Nothing in the running app calls it yet. `ANALYSIS_TIMEOUT_SECONDS` (default `1800`) limits one analysis pass.
+1. **Import** — Upload a file or paste a YouTube URL. The backend stores `source.*` under `DATA_DIR/jobs/<video_id>/`.
+2. **Generate clips** — The processing screen runs **`generate_clips`**. You get a list of landscape segments with suggested start/end times.
+3. **Edit** — Open the editor, select a clip, and adjust trim boundaries (saved via `PATCH /api/videos/{video_id}/clips/{clip_id}`). Use **Original** to preview the full source; use **Clip** for the vertical preview.
+4. **Portrait preview (9:16)** — With **Clip** selected, the frontend checks whether a portrait file exists for the current saved trim. If not, it calls **`POST …/portrait`**, polls **`GET /api/jobs/{job_id}`**, then plays **`GET …/portrait`** (same file used for export).
+5. **Export** — Download one portrait MP4 (**`GET …/portrait/download`**) or batch-export selected clips as a ZIP (**`POST …/exports/batch`**, then **`GET …/exports/batch/{job_id}/download`**).
 
-To inspect the result on a real video, render a development-only debug video (gitignored, written to `backend/data/debug/`):
+### Face tracking and portrait rendering (production)
+
+Portrait output is produced by the live API, not by debug scripts. Implementation lives under `backend/app/services/tracking/` and `backend/app/services/portrait_render.py`.
+
+For each portrait render the backend:
+
+1. Reads the clip’s **saved** `[start_time, end_time]` from the clips manifest.
+2. Runs **source analysis** once per video (cached under `DATA_DIR/jobs/<video_id>/analysis/`): YuNet face detection (bundled ONNX in `backend/models/`), scene cuts, primary-subject tracking, and a 9:16 crop path.
+3. Slices the crop path for the clip range and encodes a **1080×1920** MP4 with FFmpeg (dynamic crop via `sendcmd`, H.264 + AAC when present).
+4. Stores the result under `DATA_DIR/jobs/<video_id>/portraits/` and records it in `portraits.json`.
+
+Re-rendering after a trim change reuses cached analysis when possible; only the clip range and encode are redone. `ANALYSIS_TIMEOUT_SECONDS` (default `1800`) caps a single analysis pass. Preview and export always use the **same** on-disk portrait file for a given saved trim.
+
+### Portrait and batch export API
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| `POST` | `/api/videos/{video_id}/clips/{clip_id}/portrait` | Enqueue **`render_portrait_clip`** (**202**). Returns a job; poll `GET /api/jobs/{job_id}`. Serves cached output immediately when the render key already matches. |
+| `GET` | `/api/videos/{video_id}/clips/{clip_id}/portrait` | Stream the current portrait MP4 for the saved trim (**Range** supported). **404** if none yet; **409** if a render is in progress. |
+| `GET` | `/api/videos/{video_id}/clips/{clip_id}/portrait/download` | Download the same portrait file as an attachment. |
+| `POST` | `/api/videos/{video_id}/exports/batch` | Enqueue **`batch_export_clips`** with selected clip IDs and trim revisions (**202**). |
+| `GET` | `/api/videos/{video_id}/exports/batch/{job_id}/download` | Download the completed ZIP. |
+
+### Optional development scripts
+
+These CLI tools are **not** used by the web app. They call the same analysis/render services for local inspection and write gitignored output under `backend/data/debug/`:
 
 ```bash
 cd backend
@@ -108,7 +139,10 @@ cd backend
 .venv/bin/python -m scripts.render_portrait_clip path/to/video.mp4 --start 144 --end 174
 ```
 
-An opt-in test runs the real model on your own file: `VIDEO_CLIPPER_FACE_TEST_VIDEO=path/to/video.mp4 pytest -m real_video`.
+- **`debug_tracking`** — Overlaid visualization of detections, crop box, and framing (development only).
+- **`render_portrait_clip`** — One-off portrait MP4 using `render_portrait_clip()` (same function the API worker uses).
+
+To exercise the real YuNet model on your own file in tests: `VIDEO_CLIPPER_FACE_TEST_VIDEO=path/to/video.mp4 pytest -m real_video`.
 
 ## Scripts (backend)
 
@@ -116,4 +150,5 @@ An opt-in test runs the real model on your own file: `VIDEO_CLIPPER_FACE_TEST_VI
 | ------- | ----------- |
 | `pytest` | Run automated tests (from `backend/` with venv active) |
 | `uvicorn app.main:app --reload` | Development API server on port 8000 |
-| `python -m scripts.debug_tracking VIDEO` | Render a tracking debug video (development only) |
+| `python -m scripts.debug_tracking VIDEO` | Optional tracking visualization (development only) |
+| `python -m scripts.render_portrait_clip VIDEO` | Optional one-off portrait render (development only) |
